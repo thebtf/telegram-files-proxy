@@ -9,20 +9,33 @@ This removes the 20MB download limit but breaks remote file access — bots on o
 
 ## Solution
 
-This image embeds nginx as a reverse proxy inside the telegram-bot-api container:
+This image embeds nginx as a reverse proxy inside the telegram-bot-api container.
+`--local` mode is **always enabled** (2GB uploads, local webhooks). The `TELEGRAM_LOCAL` variable
+controls whether nginx is active — not the `--local` flag itself.
+
+### TELEGRAM_LOCAL behavior
+
+| Value | nginx | bot-api | File access |
+|-------|-------|---------|-------------|
+| `true` / `1` (default) | OFF | :8081 direct | Absolute paths (original behavior) |
+| `false` / `0` | ON (:8081) | :8083 internal | HTTP via nginx (remote-like) |
+
+### Proxy mode architecture (`TELEGRAM_LOCAL=false`)
 
 ```
 Bot (remote) → nginx:8081 → /bot{token}/*       → telegram-bot-api:8083 (internal)
-                           → /file/bot{token}/*  → filesystem (direct serve)
+                           → /file/bot{token}/*  → filesystem (sendfile, zero-copy)
 ```
 
 - **API calls** are proxied transparently to the internal bot-api
 - **`getFile` responses** are rewritten: absolute paths become relative (via `sub_filter`)
-- **File downloads** are served directly by nginx from the data directory
+- **File downloads** are served directly by nginx with `sendfile` (zero-copy I/O)
 - **IP whitelist** restricts who can download files (deny-all by default)
-- **No file size limit** — bot-api runs in local mode
+- **No file size limit** — bot-api runs in `--local` mode regardless
 
 ## Usage
+
+### Default mode (original behavior)
 
 ```bash
 docker run -d \
@@ -31,7 +44,19 @@ docker run -d \
   -v /path/to/data:/var/lib/telegram-bot-api \
   -e TELEGRAM_API_ID=12345 \
   -e TELEGRAM_API_HASH=abcdef \
-  -e TELEGRAM_LOCAL=1 \
+  thebtf/telegram-files-proxy:latest
+```
+
+### Proxy mode (HTTP file serving)
+
+```bash
+docker run -d \
+  --name telegram-bot-api \
+  -p 8081:8081 \
+  -v /path/to/data:/var/lib/telegram-bot-api \
+  -e TELEGRAM_API_ID=12345 \
+  -e TELEGRAM_API_HASH=abcdef \
+  -e TELEGRAM_LOCAL=false \
   -e ALLOWED_IPS="192.168.1.100,10.0.0.0/24" \
   thebtf/telegram-files-proxy:latest
 ```
@@ -42,20 +67,22 @@ All standard [aiogram/telegram-bot-api](https://github.com/aiogram/telegram-bot-
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ALLOWED_IPS` | **Yes** | *(empty — deny all)* | Comma-separated IPs/CIDRs for file download access |
+| `TELEGRAM_LOCAL` | No | `true` | `true` = direct mode (no nginx), `false` = proxy mode (nginx + sendfile) |
+| `ALLOWED_IPS` | When proxy mode | *(empty — deny all)* | Comma-separated IPs/CIDRs for file download access |
 
-### How It Works
+### How Proxy Mode Works
 
-1. Bot calls `getFile` → nginx proxies to bot-api → response rewritten to strip prefix
-2. Bot library constructs download URL using standard pattern: `http://host:8081/file/bot{TOKEN}/{file_path}`
-3. nginx serves the file directly from the filesystem — no 20MB limit
+1. Bot calls `getFile` → nginx proxies to bot-api → response rewritten to strip path prefix
+2. Bot library constructs download URL: `http://host:8081/file/bot{TOKEN}/{file_path}`
+3. nginx serves the file directly from disk via `sendfile` — zero-copy, no size limit
 
 ### Security
 
-- **Deny-all by default** for file downloads — `ALLOWED_IPS` is mandatory
+- **Deny-all by default** for file downloads — `ALLOWED_IPS` is mandatory in proxy mode
 - API calls (`/bot*`) are unrestricted (bot token is the auth)
 - `.binlog`, `.db`, `.sqlite` files are blocked
 - Hidden files (dotfiles) are blocked
+- Path traversal (`..`) is blocked
 
 ## License
 
