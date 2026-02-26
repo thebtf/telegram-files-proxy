@@ -104,76 +104,79 @@ if ! validate_port "$ORIGINAL_PORT"; then
 fi
 export TELEGRAM_HTTP_PORT=8083
 
-# --- 8. Configure nginx user and generate config ---
-# nginx worker must run as telegram-bot-api user to read files via sendfile
-sed -i 's/^user .*/user telegram-bot-api;/' /etc/nginx/nginx.conf
+# --- 8. Generate complete nginx.conf ---
+# Write the entire nginx.conf to avoid Alpine include-path differences.
+# Different Alpine versions use conf.d vs http.d at different nesting levels,
+# so we bypass includes entirely and write a self-contained config.
+mkdir -p /var/log/nginx /run/nginx
+cat > /etc/nginx/nginx.conf << NGINX_EOF
+user telegram-bot-api;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /run/nginx/nginx.pid;
 
-# Detect which include directory nginx.conf uses (conf.d vs http.d)
-# Alpine <3.15 uses conf.d, Alpine >=3.15 uses http.d
-NGINX_CONF_DIR="/etc/nginx/http.d"
-if grep -q 'include.*/etc/nginx/conf\.d/' /etc/nginx/nginx.conf; then
-    NGINX_CONF_DIR="/etc/nginx/conf.d"
-fi
-mkdir -p "$NGINX_CONF_DIR"
-# Remove stale configs from the other directory to avoid conflicts
-for d in /etc/nginx/http.d /etc/nginx/conf.d; do
-    [ "$d" != "$NGINX_CONF_DIR" ] && rm -f "$d/default.conf" 2>/dev/null || true
-done
-echo "telegram-files-proxy: nginx config -> $NGINX_CONF_DIR/default.conf"
-cat > "$NGINX_CONF_DIR/default.conf" << NGINX_EOF
-server {
-    listen ${ORIGINAL_PORT};
-    server_name _;
+events {
+    worker_connections 1024;
+}
 
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
 
-    # --- Defense-in-depth: block path traversal ---
-    location ~ \.\. {
-        return 403;
-    }
+    server {
+        listen ${ORIGINAL_PORT};
+        server_name _;
 
-    # --- Block hidden files ---
-    location ~ /\. {
-        return 404;
-    }
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
 
-    # --- Block database/internal files ---
-    location ~* \.(binlog|db|sqlite|log)\$ {
-        return 404;
-    }
+        # --- Defense-in-depth: block path traversal ---
+        location ~ \.\. {
+            return 403;
+        }
 
-    # --- API calls: proxy with path rewriting ---
-    location ~ ^/bot {
-        proxy_pass http://127.0.0.1:8083;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
+        # --- Block hidden files ---
+        location ~ /\. {
+            return 404;
+        }
 
-        # Disable upstream compression so sub_filter works
-        proxy_set_header Accept-Encoding "";
+        # --- Block database/internal files ---
+        location ~* \.(binlog|db|sqlite|log)\$ {
+            return 404;
+        }
 
-        # Rewrite getFile response: strip absolute path prefix
-        # "/var/lib/telegram-bot-api/TOKEN/path" -> "TOKEN/path"
-        # Bot library then constructs: /file/bot{TOKEN}/{file_path}
-        sub_filter_types application/json;
-        sub_filter '"/var/lib/telegram-bot-api/' '"';
-        sub_filter_once off;
-    }
+        # --- API calls: proxy with path rewriting ---
+        location ~ ^/bot {
+            proxy_pass http://127.0.0.1:8083;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
 
-    # --- File downloads: zero-copy sendfile + IP whitelist ---
-    # URL: /file/bot{TOKEN}/{path} -> disk: /var/lib/telegram-bot-api/{path}
-    location ~ ^/file/bot[^/]+/(.+)\$ {${ALLOW_BLOCK}
-        deny all;
+            # Disable upstream compression so sub_filter works
+            proxy_set_header Accept-Encoding "";
 
-        alias /var/lib/telegram-bot-api/\$1;
-    }
+            # Rewrite getFile response: strip absolute path prefix
+            # "/var/lib/telegram-bot-api/TOKEN/path" -> "TOKEN/path"
+            # Bot library constructs: /file/bot{TOKEN}/{TOKEN}/{path}
+            # Regex captures {TOKEN}/{path}, alias maps to disk path
+            sub_filter_types application/json;
+            sub_filter '"/var/lib/telegram-bot-api/' '"';
+            sub_filter_once off;
+        }
 
-    # --- Fallback: proxy everything else to bot-api ---
-    location / {
-        proxy_pass http://127.0.0.1:8083;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
+        # --- File downloads: zero-copy sendfile + IP whitelist ---
+        location ~ ^/file/bot[^/]+/(.+)\$ {${ALLOW_BLOCK}
+            deny all;
+
+            alias /var/lib/telegram-bot-api/\$1;
+        }
+
+        # --- Fallback: proxy everything else to bot-api ---
+        location / {
+            proxy_pass http://127.0.0.1:8083;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+        }
     }
 }
 NGINX_EOF
