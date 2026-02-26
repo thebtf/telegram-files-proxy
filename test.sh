@@ -106,6 +106,9 @@ wait_for_port 8081 5 && pass || fail "port 8081 not responding"
 test_case "nginx config has listen 8081"
 docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "listen.*8081" && pass || fail
 
+test_case "nginx config has client_max_body_size"
+docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "client_max_body_size" && pass || fail
+
 test_case "nginx config has sendfile enabled"
 docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "sendfile on" && pass || fail
 

@@ -71,6 +71,7 @@ All standard [aiogram/telegram-bot-api](https://github.com/aiogram/telegram-bot-
 | `ALLOWED_IPS` | When proxy mode | *(empty — deny all)* | Comma-separated IPs/CIDRs for file download access |
 | `PUID` | No | `1026` | User ID for file ownership (host volume mapping) |
 | `PGID` | No | `100` | Group ID for file ownership (host volume mapping) |
+| `CLIENT_MAX_BODY_SIZE` | No | `20m` | Max upload size through nginx (proxy mode only, e.g. `2000m`) |
 
 ### How Proxy Mode Works
 

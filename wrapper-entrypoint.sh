@@ -127,6 +127,8 @@ http {
         listen ${ORIGINAL_PORT};
         server_name _;
 
+        client_max_body_size ${CLIENT_MAX_BODY_SIZE:-20m};
+
         sendfile on;
         tcp_nopush on;
         tcp_nodelay on;
