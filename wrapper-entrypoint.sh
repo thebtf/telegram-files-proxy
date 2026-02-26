@@ -107,8 +107,20 @@ export TELEGRAM_HTTP_PORT=8083
 # --- 8. Configure nginx user and generate config ---
 # nginx worker must run as telegram-bot-api user to read files via sendfile
 sed -i 's/^user .*/user telegram-bot-api;/' /etc/nginx/nginx.conf
-mkdir -p /etc/nginx/http.d
-cat > /etc/nginx/http.d/default.conf << NGINX_EOF
+
+# Detect which include directory nginx.conf uses (conf.d vs http.d)
+# Alpine <3.15 uses conf.d, Alpine >=3.15 uses http.d
+NGINX_CONF_DIR="/etc/nginx/http.d"
+if grep -q 'include.*/etc/nginx/conf\.d/' /etc/nginx/nginx.conf; then
+    NGINX_CONF_DIR="/etc/nginx/conf.d"
+fi
+mkdir -p "$NGINX_CONF_DIR"
+# Remove stale configs from the other directory to avoid conflicts
+for d in /etc/nginx/http.d /etc/nginx/conf.d; do
+    [ "$d" != "$NGINX_CONF_DIR" ] && rm -f "$d/default.conf" 2>/dev/null || true
+done
+echo "telegram-files-proxy: nginx config -> $NGINX_CONF_DIR/default.conf"
+cat > "$NGINX_CONF_DIR/default.conf" << NGINX_EOF
 server {
     listen ${ORIGINAL_PORT};
     server_name _;
