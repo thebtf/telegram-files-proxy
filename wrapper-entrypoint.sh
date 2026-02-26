@@ -29,7 +29,8 @@ if [ "$CURRENT_UID" != "$PUID" ]; then
     echo "telegram-files-proxy: remapping telegram-bot-api UID=$CURRENT_UID->$PUID GID->$PGID"
     groupmod -g "$PGID" telegram-bot-api 2>/dev/null || true
     usermod -u "$PUID" -g "$PGID" telegram-bot-api 2>/dev/null || true
-    chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api 2>/dev/null || true
+    mkdir -p /tmp/telegram-bot-api
+    chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api /tmp/telegram-bot-api 2>/dev/null || true
 fi
 
 # --- 2. Determine proxy mode from user's TELEGRAM_LOCAL ---
