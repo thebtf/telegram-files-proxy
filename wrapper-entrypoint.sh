@@ -98,7 +98,7 @@ server {
         return 403;
     }
 
-    # --- API calls: proxy to internal telegram-bot-api ---
+    # --- API calls: proxy with path rewriting ---
     location ~ ^/bot {
         proxy_pass http://127.0.0.1:8083;
         proxy_set_header Host \$host;
@@ -109,47 +109,27 @@ server {
 
         # Rewrite getFile response: strip absolute path prefix
         # "/var/lib/telegram-bot-api/TOKEN/path" -> "TOKEN/path"
-        # Bot library then constructs: /file/bot{TOKEN}/{TOKEN}/path
-        # which nginx maps correctly via the /file/ location below
+        # Bot library then constructs: /file/bot{TOKEN}/{file_path}
         sub_filter_types application/json;
         sub_filter '"/var/lib/telegram-bot-api/' '"';
         sub_filter_once off;
     }
 
-    # --- File downloads: serve from filesystem with IP whitelist ---
-    # filepath must start with a non-slash char to prevent absolute path traversal
-    location ~ ^/file/bot[^/]+/(?P<filepath>[^/].+)\$ {
-        # IP whitelist (generated from ALLOWED_IPS)${ALLOW_BLOCK}
+    # --- File downloads: IP-restricted proxy to bot-api ---
+    # bot-api in --local mode serves files at /file/bot{TOKEN}/{path}
+    location /file/ {${ALLOW_BLOCK}
         deny all;
 
-        # Path traversal guard: reject if captured path contains ..
-        if (\$filepath ~ \.\.) {
-            return 403;
-        }
+        proxy_pass http://127.0.0.1:8083;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
 
-        alias /var/lib/telegram-bot-api/\$filepath;
-
-        # Only serve known media types; default_type covers unrecognized extensions
-        types {
-            image/jpeg                jpg jpeg;
-            image/png                 png;
-            image/gif                 gif;
-            image/webp                webp;
-            video/mp4                 mp4;
-            video/webm                webm;
-            audio/ogg                 oga ogg opus;
-            audio/mpeg                mp3;
-            audio/mp4                 m4a;
-            application/pdf           pdf;
-            application/octet-stream  bin;
-        }
-        default_type application/octet-stream;
-
-        # Security headers
-        add_header X-Content-Type-Options nosniff always;
-        add_header X-Frame-Options DENY always;
-        add_header Content-Security-Policy "default-src 'none'" always;
-        add_header Cache-Control "no-store" always;
+    # --- Fallback: proxy everything else to bot-api ---
+    location / {
+        proxy_pass http://127.0.0.1:8083;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
     }
 
     # Block database/internal files
