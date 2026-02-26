@@ -11,6 +11,16 @@ set -e
 # --local is ALWAYS enabled regardless of TELEGRAM_LOCAL value.
 # =============================================================================
 
+# --- Validation helpers ---
+validate_port() {
+    echo "$1" | grep -Eq '^[0-9]{1,5}$' && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+validate_cidr() {
+    # Accept IPv4, IPv4/CIDR, IPv6, IPv6/CIDR — reject everything else
+    echo "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^[0-9a-fA-F:]+(/[0-9]{1,3})?$'
+}
+
 # --- 1. Determine proxy mode from user's TELEGRAM_LOCAL ---
 USER_LOCAL="${TELEGRAM_LOCAL:-true}"
 
@@ -52,6 +62,10 @@ if [ -n "$ALLOWED_IPS" ]; then
     for ip in $ALLOWED_IPS; do
         ip=$(echo "$ip" | tr -d ' ')
         if [ -n "$ip" ]; then
+            if ! validate_cidr "$ip"; then
+                echo "ERROR: Invalid IP/CIDR in ALLOWED_IPS: '$ip'" >&2
+                exit 1
+            fi
             ALLOW_BLOCK="${ALLOW_BLOCK}
         allow ${ip};"
         fi
@@ -59,9 +73,13 @@ if [ -n "$ALLOWED_IPS" ]; then
     IFS="$OLD_IFS"
 fi
 
-# --- 5. Override TELEGRAM_HTTP_PORT to internal port ---
+# --- 5. Validate and override TELEGRAM_HTTP_PORT to internal port ---
 # nginx will listen on the original port (8081), bot-api on internal 8083
 ORIGINAL_PORT="${TELEGRAM_HTTP_PORT:-8081}"
+if ! validate_port "$ORIGINAL_PORT"; then
+    echo "ERROR: Invalid TELEGRAM_HTTP_PORT value: '$ORIGINAL_PORT'" >&2
+    exit 1
+fi
 export TELEGRAM_HTTP_PORT=8083
 
 # --- 6. Generate nginx config ---
@@ -75,7 +93,7 @@ server {
     tcp_nopush on;
     tcp_nodelay on;
 
-    # --- Path traversal protection (S3: input validation) ---
+    # --- Defense-in-depth: block path traversal at server level ---
     location ~ \.\. {
         return 403;
     }
@@ -99,7 +117,8 @@ server {
     }
 
     # --- File downloads: serve from filesystem with IP whitelist ---
-    location ~ ^/file/bot[^/]+/(?P<filepath>.+)\$ {
+    # filepath must start with a non-slash char to prevent absolute path traversal
+    location ~ ^/file/bot[^/]+/(?P<filepath>[^/].+)\$ {
         # IP whitelist (generated from ALLOWED_IPS)${ALLOW_BLOCK}
         deny all;
 
@@ -110,7 +129,7 @@ server {
 
         alias /var/lib/telegram-bot-api/\$filepath;
 
-        # Only serve known media types, reject everything else
+        # Only serve known media types; default_type covers unrecognized extensions
         types {
             image/jpeg                jpg jpeg;
             image/png                 png;
@@ -145,10 +164,11 @@ server {
 }
 NGINX_EOF
 
-# --- 7. Start nginx in background ---
+# --- 7. Validate and start nginx ---
 echo "telegram-files-proxy: nginx on :${ORIGINAL_PORT} -> bot-api on :8083"
 echo "telegram-files-proxy: file downloads allowed for: ${ALLOWED_IPS:-NONE}"
-nginx
+nginx -t 2>&1 || { echo "ERROR: nginx config validation failed" >&2; exit 1; }
+nginx 2>&1 || { echo "ERROR: nginx failed to start" >&2; exit 1; }
 
 # --- 8. Run original entrypoint (foreground, PID 1) ---
 exec /docker-entrypoint.sh
