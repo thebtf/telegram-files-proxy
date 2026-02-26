@@ -99,16 +99,16 @@ server {
     }
 
     # --- File downloads: serve from filesystem with IP whitelist ---
-    location ~ ^/file/bot[^/]+/(.+)\$ {
+    location ~ ^/file/bot[^/]+/(?P<filepath>.+)\$ {
         # IP whitelist (generated from ALLOWED_IPS)${ALLOW_BLOCK}
         deny all;
 
         # Path traversal guard: reject if captured path contains ..
-        if (\$1 ~ \.\.) {
+        if (\$filepath ~ \.\.) {
             return 403;
         }
 
-        alias /var/lib/telegram-bot-api/\$1;
+        alias /var/lib/telegram-bot-api/\$filepath;
 
         # Only serve known media types, reject everything else
         types {
