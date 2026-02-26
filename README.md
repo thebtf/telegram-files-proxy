@@ -23,13 +23,13 @@ controls whether nginx is active — not the `--local` flag itself.
 ### Proxy mode architecture (`TELEGRAM_LOCAL=false`)
 
 ```
-Bot (remote) → nginx:8081 → /bot{token}/*       → telegram-bot-api:8083 (internal)
-                           → /file/bot{token}/*  → filesystem (sendfile, zero-copy)
+Bot (remote) → nginx:8081 → /bot{token}/*       → bot-api:8083 (API + path rewriting)
+                           → /file/bot{token}/*  → bot-api:8083 (file serving + IP whitelist)
+                           → /*                  → bot-api:8083 (fallback)
 ```
 
-- **API calls** are proxied transparently to the internal bot-api
-- **`getFile` responses** are rewritten: absolute paths become relative (via `sub_filter`)
-- **File downloads** are served directly by nginx with `sendfile` (zero-copy I/O)
+- **API calls** (`/bot*`) are proxied with `sub_filter` to rewrite absolute paths to relative
+- **File downloads** (`/file/*`) are proxied to bot-api with IP whitelist (bot-api serves files natively in `--local` mode)
 - **IP whitelist** restricts who can download files (deny-all by default)
 - **No file size limit** — bot-api runs in `--local` mode regardless
 
@@ -67,14 +67,14 @@ All standard [aiogram/telegram-bot-api](https://github.com/aiogram/telegram-bot-
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `TELEGRAM_LOCAL` | No | `true` | `true` = direct mode (no nginx), `false` = proxy mode (nginx + sendfile) |
+| `TELEGRAM_LOCAL` | No | `true` | `true` = direct mode (no nginx), `false` = proxy mode (nginx reverse proxy) |
 | `ALLOWED_IPS` | When proxy mode | *(empty — deny all)* | Comma-separated IPs/CIDRs for file download access |
 
 ### How Proxy Mode Works
 
 1. Bot calls `getFile` → nginx proxies to bot-api → response rewritten to strip path prefix
 2. Bot library constructs download URL: `http://host:8081/file/bot{TOKEN}/{file_path}`
-3. nginx serves the file directly from disk via `sendfile` — zero-copy, no size limit
+3. nginx proxies the file request to bot-api (which serves files natively in `--local` mode), enforcing IP whitelist
 
 ### Security
 
@@ -83,6 +83,8 @@ All standard [aiogram/telegram-bot-api](https://github.com/aiogram/telegram-bot-
 - `.binlog`, `.db`, `.sqlite` files are blocked
 - Hidden files (dotfiles) are blocked
 - Path traversal (`..`) is blocked
+- IP/CIDR values in `ALLOWED_IPS` are validated at startup (rejects malformed input)
+- `TELEGRAM_HTTP_PORT` is validated as integer 1-65535
 
 ## License
 

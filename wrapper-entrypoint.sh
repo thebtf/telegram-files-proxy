@@ -89,10 +89,6 @@ server {
     listen ${ORIGINAL_PORT};
     server_name _;
 
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-
     # --- Defense-in-depth: block path traversal at server level ---
     location ~ \.\. {
         return 403;
