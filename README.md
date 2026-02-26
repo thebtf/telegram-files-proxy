@@ -24,12 +24,12 @@ controls whether nginx is active — not the `--local` flag itself.
 
 ```
 Bot (remote) → nginx:8081 → /bot{token}/*       → bot-api:8083 (API + path rewriting)
-                           → /file/bot{token}/*  → bot-api:8083 (file serving + IP whitelist)
+                           → /file/bot{token}/*  → disk via sendfile (zero-copy + IP whitelist)
                            → /*                  → bot-api:8083 (fallback)
 ```
 
 - **API calls** (`/bot*`) are proxied with `sub_filter` to rewrite absolute paths to relative
-- **File downloads** (`/file/*`) are proxied to bot-api with IP whitelist (bot-api serves files natively in `--local` mode)
+- **File downloads** (`/file/*`) are served directly from disk via nginx `sendfile` (zero-copy, no userspace buffering) with IP whitelist
 - **IP whitelist** restricts who can download files (deny-all by default)
 - **No file size limit** — bot-api runs in `--local` mode regardless
 
@@ -74,7 +74,7 @@ All standard [aiogram/telegram-bot-api](https://github.com/aiogram/telegram-bot-
 
 1. Bot calls `getFile` → nginx proxies to bot-api → response rewritten to strip path prefix
 2. Bot library constructs download URL: `http://host:8081/file/bot{TOKEN}/{file_path}`
-3. nginx proxies the file request to bot-api (which serves files natively in `--local` mode), enforcing IP whitelist
+3. nginx serves the file directly from disk via `sendfile` (zero-copy: disk → kernel → network), enforcing IP whitelist
 
 ### Security
 

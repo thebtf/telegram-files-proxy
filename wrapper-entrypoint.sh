@@ -89,9 +89,22 @@ server {
     listen ${ORIGINAL_PORT};
     server_name _;
 
-    # --- Defense-in-depth: block path traversal at server level ---
+    sendfile on;
+    tcp_nopush on;
+
+    # --- Defense-in-depth: block path traversal ---
     location ~ \.\. {
         return 403;
+    }
+
+    # --- Block hidden files ---
+    location ~ /\. {
+        return 404;
+    }
+
+    # --- Block database/internal files ---
+    location ~* \.(binlog|db|sqlite|log)\$ {
+        return 404;
     }
 
     # --- API calls: proxy with path rewriting ---
@@ -111,14 +124,12 @@ server {
         sub_filter_once off;
     }
 
-    # --- File downloads: IP-restricted proxy to bot-api ---
-    # bot-api in --local mode serves files at /file/bot{TOKEN}/{path}
-    location /file/ {${ALLOW_BLOCK}
+    # --- File downloads: zero-copy sendfile + IP whitelist ---
+    # URL: /file/bot{TOKEN}/{path} -> disk: /var/lib/telegram-bot-api/{path}
+    location ~ ^/file/bot[^/]+/(.+)\$ {${ALLOW_BLOCK}
         deny all;
 
-        proxy_pass http://127.0.0.1:8083;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
+        alias /var/lib/telegram-bot-api/\$1;
     }
 
     # --- Fallback: proxy everything else to bot-api ---
@@ -126,16 +137,6 @@ server {
         proxy_pass http://127.0.0.1:8083;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-    }
-
-    # Block database/internal files
-    location ~* \.(binlog|db|sqlite|log)\$ {
-        return 404;
-    }
-
-    # Block hidden files
-    location ~ /\. {
-        return 404;
     }
 }
 NGINX_EOF
