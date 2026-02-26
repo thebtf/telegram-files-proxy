@@ -108,7 +108,8 @@ export TELEGRAM_HTTP_PORT=8083
 # Write the entire nginx.conf to avoid Alpine include-path differences.
 # Different Alpine versions use conf.d vs http.d at different nesting levels,
 # so we bypass includes entirely and write a self-contained config.
-mkdir -p /var/log/nginx /run/nginx
+mkdir -p /var/log/nginx /run/nginx /var/lib/telegram-bot-api/.nginx_temp
+chown telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api/.nginx_temp
 cat > /etc/nginx/nginx.conf << NGINX_EOF
 user telegram-bot-api;
 worker_processes auto;
@@ -123,11 +124,17 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
+    # Temp paths on mounted volume (not container overlay fs)
+    # Dot-prefix directory is blocked by nginx location ~ /\. rule
+    client_body_temp_path /var/lib/telegram-bot-api/.nginx_temp/client_body;
+    proxy_temp_path /var/lib/telegram-bot-api/.nginx_temp/proxy;
+
     server {
         listen ${ORIGINAL_PORT};
         server_name _;
 
         client_max_body_size ${CLIENT_MAX_BODY_SIZE:-20m};
+        client_body_buffer_size 16m;
 
         sendfile on;
         tcp_nopush on;

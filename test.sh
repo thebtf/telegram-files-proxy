@@ -109,6 +109,15 @@ docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "listen.*8081" && pass || fail
 test_case "nginx config has client_max_body_size"
 docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "client_max_body_size" && pass || fail
 
+test_case "nginx config has client_body_buffer_size 16m"
+docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "client_body_buffer_size 16m" && pass || fail
+
+test_case "nginx temp directory on data volume (not overlay fs)"
+docker exec "$CONTAINER" sh -c 'test -d /var/lib/telegram-bot-api/.nginx_temp && touch /var/lib/telegram-bot-api/.nginx_temp/test_write && rm /var/lib/telegram-bot-api/.nginx_temp/test_write' && pass || fail
+
+test_case "nginx config has client_body_temp_path"
+docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "client_body_temp_path" && pass || fail
+
 test_case "nginx config has sendfile enabled"
 docker exec "$CONTAINER" nginx -T 2>&1 | grep -q "sendfile on" && pass || fail
 
