@@ -33,7 +33,17 @@ if [ "$CURRENT_UID" != "$PUID" ]; then
     chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api /tmp/telegram-bot-api 2>/dev/null || true
 fi
 
-# --- 2. Determine proxy mode from user's TELEGRAM_LOCAL ---
+# --- 2. Normalize boolean env vars for base image compatibility ---
+# Base image uses append_flag_from_env (non-empty = enabled), so
+# false/0/no/off must become empty to actually disable features.
+for var in TELEGRAM_STAT; do
+    val=$(printenv "$var" 2>/dev/null || true)
+    case "$val" in
+        false|0|no|off) unset "$var" ;;
+    esac
+done
+
+# --- 3. Determine proxy mode from user's TELEGRAM_LOCAL ---
 USER_LOCAL="${TELEGRAM_LOCAL:-true}"
 
 case "$USER_LOCAL" in
@@ -48,7 +58,7 @@ esac
 # Force --local ON for the aiogram entrypoint (always)
 export TELEGRAM_LOCAL=1
 
-# --- 3. If no proxy mode, just run the original entrypoint ---
+# --- 4. If no proxy mode, just run the original entrypoint ---
 if [ "$PROXY_MODE" = "false" ]; then
     echo "telegram-files-proxy: proxy OFF (TELEGRAM_LOCAL=true), direct mode"
     exec /docker-entrypoint.sh
@@ -60,13 +70,13 @@ fi
 
 echo "telegram-files-proxy: proxy ON (TELEGRAM_LOCAL=false)"
 
-# --- 4. Validate ALLOWED_IPS ---
+# --- 5. Validate ALLOWED_IPS ---
 if [ -z "$ALLOWED_IPS" ]; then
     echo "WARNING: ALLOWED_IPS is empty. File downloads will be denied for all IPs."
     echo "Set ALLOWED_IPS to a comma-separated list of IPs/CIDRs (e.g. '192.168.1.100,10.0.0.0/24')"
 fi
 
-# --- 5. Generate IP whitelist block for /file/ location ---
+# --- 6. Generate IP whitelist block for /file/ location ---
 ALLOW_BLOCK=""
 if [ -n "$ALLOWED_IPS" ]; then
     OLD_IFS="$IFS"
@@ -85,7 +95,7 @@ if [ -n "$ALLOWED_IPS" ]; then
     IFS="$OLD_IFS"
 fi
 
-# --- 6. Validate and override TELEGRAM_HTTP_PORT to internal port ---
+# --- 7. Validate and override TELEGRAM_HTTP_PORT to internal port ---
 # nginx will listen on the original port (8081), bot-api on internal 8083
 ORIGINAL_PORT="${TELEGRAM_HTTP_PORT:-8081}"
 if ! validate_port "$ORIGINAL_PORT"; then
@@ -94,7 +104,7 @@ if ! validate_port "$ORIGINAL_PORT"; then
 fi
 export TELEGRAM_HTTP_PORT=8083
 
-# --- 7. Configure nginx user and generate config ---
+# --- 8. Configure nginx user and generate config ---
 # nginx worker must run as telegram-bot-api user to read files via sendfile
 sed -i 's/^user .*/user telegram-bot-api;/' /etc/nginx/nginx.conf
 mkdir -p /etc/nginx/http.d
@@ -156,11 +166,11 @@ server {
 }
 NGINX_EOF
 
-# --- 8. Validate and start nginx ---
+# --- 9. Validate and start nginx ---
 echo "telegram-files-proxy: nginx on :${ORIGINAL_PORT} -> bot-api on :8083"
 echo "telegram-files-proxy: file downloads allowed for: ${ALLOWED_IPS:-NONE}"
 nginx -t 2>&1 || { echo "ERROR: nginx config validation failed" >&2; exit 1; }
 nginx 2>&1 || { echo "ERROR: nginx failed to start" >&2; exit 1; }
 
-# --- 9. Run original entrypoint (foreground, PID 1) ---
+# --- 10. Run original entrypoint (foreground, PID 1) ---
 exec /docker-entrypoint.sh
