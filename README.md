@@ -69,6 +69,8 @@ All standard [aiogram/telegram-bot-api](https://github.com/aiogram/telegram-bot-
 |----------|----------|---------|-------------|
 | `TELEGRAM_LOCAL` | No | `true` | `true` = direct mode (no nginx), `false` = proxy mode (nginx reverse proxy) |
 | `ALLOWED_IPS` | When proxy mode | *(empty — deny all)* | Comma-separated IPs/CIDRs for file download access |
+| `PUID` | No | `1026` | User ID for file ownership (host volume mapping) |
+| `PGID` | No | `100` | Group ID for file ownership (host volume mapping) |
 
 ### How Proxy Mode Works
 
