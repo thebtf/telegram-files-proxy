@@ -1,15 +1,14 @@
-FROM nginx:alpine
+FROM aiogram/telegram-bot-api:latest
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Install nginx (Alpine-based image)
+RUN apk add --no-cache nginx
 
-# Data directory (mount telegram-bot-api appdata here)
-VOLUME /data
+COPY wrapper-entrypoint.sh /wrapper-entrypoint.sh
+RUN chmod +x /wrapper-entrypoint.sh
 
 ENV ALLOWED_IPS=""
-ENV LISTEN_PORT=8080
 
-EXPOSE 8080
+# 8081 = nginx (API proxy + file serving), 8082 = stats (direct from bot-api)
+EXPOSE 8081 8082
 
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/wrapper-entrypoint.sh"]
